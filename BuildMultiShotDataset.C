@@ -1,4 +1,4 @@
-void LearnParams(TTree* inTree, float* fpos, float* start, float* stepsize, float* tolerance, int* nsteps) {
+void LearnParams(TTree* inTree, float* fpos, float* start, float* stepsize, float* tolerance, int* nsteps, int* major, int* minor) {
     //read through the input tree to figure out the starting coordinates, step sizes, and number of steps in each direction.
 
 
@@ -22,7 +22,7 @@ void LearnParams(TTree* inTree, float* fpos, float* start, float* stepsize, floa
         inTree->GetEntry(entry);
         //figure out which direction the laser moved in:
         int nMoved = 0;
-        for (int i = 1; i < 4; ++i) {
+        for (int i = 0; i < 4; ++i) {
             float delta=fpos[i] - fposold[i];
             if (nLocalSteps[i] == 0) {
                 nMoved++;
@@ -31,6 +31,9 @@ void LearnParams(TTree* inTree, float* fpos, float* start, float* stepsize, floa
                 stepSizes[i].push_back(delta);
                 nLocalSteps[i]++;
             }
+        }
+        for (int i = 0; i < 4; ++i) {
+            fposold[i] = fpos[i];
         }
         assert(nMoved > 0 && nMoved<3);
     }
@@ -75,20 +78,39 @@ void LearnParams(TTree* inTree, float* fpos, float* start, float* stepsize, floa
             sigma[1] += (stepSizes[most[0]][i] - mean[1]) * (stepSizes[most[0]][i] - mean[1]);
         }
     }
-    sigma[0] = std::sqrt(sigma[0] / numdir[0]);
-    sigma[1] = std::sqrt(sigma[1] / numdir[1]);
+    sigma[0] = std::sqrt(sigma[0] / numdir[0])+0.01;
+    sigma[1] = std::sqrt(sigma[1] / numdir[1])+0.01;
 
     //check if the two means are consistent with each other, using proper gaussian error propagation.  If so, we are switching back (=snaking):
-    meandiff=mean[0]-mean[1];
+    float meandiff=mean[0]+mean[1];
     float sigmadiff = std::sqrt(sigma[0]*sigma[0]+sigma[1]*sigma[1]);
     bool zigzag = false; //default is snaking
     if (fabs(meandiff) > 3*sigmadiff) {
         //if we're not consistent with zero, then we are zigzagging.
         zigzag = 1; //we are zigzagging.
-        std::cout << "Zigzag pattern detected." << std::endl;
+        printf("Zigzag pattern detected: mean[0]=%.2f, mean[1]=%.2f, sigmadiff=%.2f\n", mean[0], mean[1], sigmadiff);
+        printf("major axis: %.2f, minor axis: %.2f\n", most[0], most[1]);
+        printf("nmost[0]=%d, nmost[1]=%d\n", nmost[0], nmost[1]);
+        printf("mean[0]=%.2f, mean[1]=%.2f, sigma[0]=%.2f, sigma[1]=%.2f\n", mean[0], mean[1], sigma[0], sigma[1]);
+
     } else {
-        std::cout << "Snaking pattern detected." << std::endl;
+        printf("Snaking pattern detected.\n");
+        printf("major axis: %.2f, minor axis: %.2f\n", most[0], most[1]);
+        printf("nmost[0]=%d, nmost[1]=%d\n", nmost[0], nmost[1]);
+        printf("mean[0]=%.2f, mean[1]=%.2f, sigma[0]=%.2f, sigma[1]=%.2f\n", mean[0], mean[1], sigma[0], sigma[1]); 
     }
+            for (int i=0;i<4;i++){
+            printf("Step sizes in direction %d:\n", i);
+            for (int j=0;j<stepSizes[i].size();j++){
+                printf("%.2f ", stepSizes[i][j]);
+            }
+            if (i== most[0]) {
+                printf(" <-- main direction");
+            } else if (i == most[1]) {
+                printf(" <-- secondary direction");
+            }
+            printf("\n");
+        }
 
     //the second direction is easier, since we only have one step size.  We can just take the mean and sigma of the step sizes in that direction.
     float mean2 = 0;
@@ -100,7 +122,7 @@ void LearnParams(TTree* inTree, float* fpos, float* start, float* stepsize, floa
     for (int i=0;i<nmost[1];i++){
         sigma2 += (stepSizes[most[1]][i] - mean2) * (stepSizes[most[1]][i] - mean2);
     }
-    sigma2 = std::sqrt(sigma2 / nmost[1]);
+    sigma2 = std::sqrt(sigma2 / nmost[1])+0.01;
 
     if(zigzag){
         //Extract the stepsize, number of steps, and how tightly we can cut (toleraance) for the main direction.  In zigzag, the stepsize is the one that's more common:
@@ -134,7 +156,8 @@ void LearnParams(TTree* inTree, float* fpos, float* start, float* stepsize, floa
         stepsize[most[1]] = mean2;
         tolerance[most[1]] = 3*sigma2;
     }
-
+*major= most[0];
+*minor= most[1];
     return;
 }
 
@@ -194,8 +217,9 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
 
     // Create branches in the new tree
     int n=numShots;
+    int nf= numFixedEntries; // Number of fixed entries
     tree->Branch("n", &n, "n/I");
-    tree->Branch("nf", &numFixedEntries, "nf/I");
+    tree->Branch("nf", &nf, "nf/I");
     for (int i = 0; i < 4; ++i) {
         tree->Branch(Form("fpos%d", i), &(fposNew[i][0]), Form("fpos%d[nf]/F", i));
         tree->Branch(Form("pd1_%d", i), &(pd1New[i][0]), Form("pd1_%d[nf]/F", i));
@@ -210,6 +234,8 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
     float x1[numShots+numFixedEntries], y1[numShots+numFixedEntries];
     float x2[numShots+numFixedEntries], y2[numShots+numFixedEntries];
     float s1[numShots+numFixedEntries], s2[numShots+numFixedEntries];
+    int neighbors; //boolean packing of whether we have neighbors in each direction (up, down, left, right)
+    tree->Branch("neighbors", &neighbors, "neighbors/I");
     tree->Branch("dist", &dist, "dist[nf]/F");
     tree->Branch("d2", &d2, "d2[nf]/F");
     tree->Branch("d3", &d3, "d3[nf]/F");
@@ -233,7 +259,8 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
     //prep the 2D grid so we can read about gradients etc.
     float start[4], stepsize[4], tolerance[4];
     int nsteps[4];
-    LearnParams(inTree,fpos, pd1, pd2, &start,&stepsize,&tolerance,&nsteps);
+    int major, minor; //major and minor axis indices
+    LearnParams(inTree,fpos, start,stepsize,tolerance,nsteps,&major,&minor);
 //we will look for how many multiples of stepsize[i] we are from start[i], and if the residual is less than tolerance[i], we can confidently put the data in that bin.
     // Print the learned parameters using printf
     printf("Learned parameters:\n");
@@ -255,30 +282,33 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
 
 
     Long64_t nEntries = inTree->GetEntries();
-    for (Long64_t entry = 0; entry < nEntries; ++entry) {
+    for (Long64_t entry = 0; entry < nEntries; entry++) {
         inTree->GetEntry(entry);
         // Fill the new tree with the data from the original tree
         //find where we are in the grid:
         int bin[4];
         for (int i = 0; i < 4; ++i) {
-            bin[i] = (fpos[i] - start[i]+tolerance[i]) / stepsize[i];
-            if (bin[i] < 0) {
-                bin[i] = 0;
-                printf("Warning: fpos[%d] = %.2f +tolerance is below start[%d] = %.2f, setting bin[%d] to 0.\n", i, fpos[i], i, start[i], i);
-            if (bin[i] > nsteps[i]) {
-                bin[i] = nsteps[i];
-                printf("Warning: fpos[%d] = %.2f +tolerance is above start[%d] = %.2f + %.2f*nsteps[%d] = %d, setting bin[%d] to %d.\n", i, fpos[i], i, start[i], i, stepsize[i],nsteps[i], i, nsteps[i]);
+            if (nsteps[i] == 0) {
+                bin[i] = 0; //if there are no steps, we are at the start.
+            }else{
+                bin[i] = (fpos[i] - start[i]+tolerance[i]) / stepsize[i];    
+                if (bin[i] < 0) {
+                    bin[i] = 0;
+                    printf("Warning: fpos[%d] = %.2f +tolerance is below start[%d] = %.2f, setting bin[%d] to 0.\n", i, fpos[i], i, start[i], i);
+                }
+                if (bin[i] > nsteps[i]) {
+                    bin[i] = nsteps[i];
+                    printf("Warning: fpos[%d] = %.2f +tolerance is above start[%d] = %.2f + %.2f*nsteps[%d] = %d, setting bin[%d] to %d.\n", i, fpos[i], i, start[i], stepsize[i],i, nsteps[i], i, nsteps[i]);
+                }
             }
-        }            
+        }        
+        
 
         // Fill this grid point with the data from the original tree:
         int shot=0; //zero is 'where we are'.
         s1[shot] = 0;
         s2[shot] = 0;
         for (int i = 0; i < 4; ++i) {
-            fposNew[i][shot] = fpos[i];
-            pd1New[i][shot] = pd1[i];
-            pd2New[i][shot] = pd2[i];
             s1[shot] += pd1[i]; 
             s2[shot] += pd2[i]; 
         }
@@ -309,6 +339,7 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
         s1_grid[bin[0]][bin[1]][bin[2]][bin[3]] = s1[shot];
         s2_grid[bin[0]][bin[1]][bin[2]][bin[3]] = s2[shot];
     }
+    //we have now filled the grid with the data from the original tree.
 
     // Now we will fill the output tree with the spatially correlated data from the grids:
 
@@ -323,15 +354,15 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
             bin[0] = i / ((nsteps[1]+1) * (nsteps[2]+1) * (nsteps[3]+1));
             bin[1] = (i / ((nsteps[2]+1) * (nsteps[3]+1))) % (nsteps[1]+1);
             bin[2] = (i / (nsteps[3]+1)) % (nsteps[2]+1);
-            bin[3] = i % nsteps[3];
+            bin[3] = i % (nsteps[3]+1);
 
             // Fill the tree with the data from this grid point
-            for (int i=0; i < 4; ++i) {
+            for (int i=0; i < 4; ++i) {//the four fpos, pd1, pd2 values
                 fposNew[i][0] = fpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][i];
                 pd1New[i][0] = pd1_grid[bin[0]][bin[1]][bin[2]][bin[3]][i];
                 pd2New[i][0] = pd2_grid[bin[0]][bin[1]][bin[2]][bin[3]][i];
             }
-                x1[0] = x1_grid[bin[0]][bin[1]][bin[2]][bin[3]];
+            x1[0] = x1_grid[bin[0]][bin[1]][bin[2]][bin[3]];
             x2[0] = x2_grid[bin[0]][bin[1]][bin[2]][bin[3]];
             y1[0] = y1_grid[bin[0]][bin[1]][bin[2]][bin[3]];
             y2[0] = y2_grid[bin[0]][bin[1]][bin[2]][bin[3]];
@@ -340,16 +371,17 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
             dist[0] = dist_grid[bin[0]][bin[1]][bin[2]][bin[3]];
             s1[0] = s1_grid[bin[0]][bin[1]][bin[2]][bin[3]];
             s2[0] = s2_grid[bin[0]][bin[1]][bin[2]][bin[3]];
-            }
+            
 
             //now fill the next four entries with the ones in the adjacent bins, if they exist.
-            for (int j = 0; j < 4; ++j) {
+            neighbors = 0; //reset the neighbors counter
+            for (int j = 0; j < 4; ++j) {//calculate and fill adjacent bins
                 //calculate the adjacent coordinate, by moving one step in each of the two directions that have a step size.
                 int adjBin[4] = {bin[0], bin[1], bin[2], bin[3]};
                 if (j < 2) {
-                    adjBin[j] += 1;
+                    adjBin[major] += j%2?-1:1;
                 } else {
-                    adjBin[j] -= 1;
+                    adjBin[minor] += j%2?-1:1;
                 }
                 //check if the adjacent bin is within bounds
                 bool inBounds = true;
@@ -360,6 +392,7 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
                     }
                 }
                 if (inBounds) {
+                    neighbors |= (1 << j); //set the j-th bit in the neighbors variable
                     // Fill the tree with the data from this adjacent grid point
                     for (int i=0; i < 4; ++i) {
                         fposNew[i][j+1] = fpos_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]][i];
@@ -378,19 +411,19 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
                 } else {
                     //if the adjacent bin is out of bounds, we just fill it with zeros.
                     for (int i=0; i < 4; ++i) {
-                        fposNew[i][j+1] = 0;
-                        pd1New[i][j+1] = 0;
-                        pd2New[i][j+1] = 0;
+                        fposNew[i][j+1] = -99;
+                        pd1New[i][j+1] = -99;
+                        pd2New[i][j+1] = -99;
                     }   
-                    x1[j+1] = 0;
-                    x2[j+1] = 0;
-                    y1[j+1] = 0;
-                    y2[j+1] = 0;
-                    d2[j+1] = 0;
-                    d3[j+1] = 0;
-                    dist[j+1] = 0;
-                    s1[j+1] = 0;
-                    s2[j+1] = 0;
+                    x1[j+1] = -99;
+                    x2[j+1] = -99;
+                    y1[j+1] = -99;
+                    y2[j+1] = -99;
+                    d2[j+1] = -99;
+                    d3[j+1] = -99;
+                    dist[j+1] = -99;
+                    s1[j+1] = -99;
+                    s2[j+1] = -99;
                 }
             }
             //now fill the random entries, which are just random entries from the original tree, or, better, random entries from the grid, since we already calculated some values
@@ -415,7 +448,7 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
                 dist[numFixedEntries+shot] = dist_grid[randBin[0]][randBin[1]][randBin[2]][randBin[3]];
                 s1[numFixedEntries+shot] = s1_grid[randBin[0]][randBin[1]][randBin[2]][randBin[3]];
                 s2[numFixedEntries+shot] = s2_grid[randBin[0]][randBin[1]][randBin[2]][randBin[3]];
-                
+
 
             }
             // Fill the tree with the new data for this entry
