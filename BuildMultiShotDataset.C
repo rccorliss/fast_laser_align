@@ -80,7 +80,7 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
     float x1[numShots+numFixedEntries], y1[numShots+numFixedEntries];
     float x2[numShots+numFixedEntries], y2[numShots+numFixedEntries];
     float s1[numShots+numFixedEntries], s2[numShots+numFixedEntries];
-    float Df2, Df3; // Best guess delta in fpos to get to zero,zero in diode space.
+    float Df2, Df2asym, Df2uns, Df3, denom; // Best guess delta in fpos to get to zero,zero in diode space.
     int neighbors; //boolean packing of whether we have neighbors in each direction (up, down, left, right)
     tree->Branch("neighbors", &neighbors, "neighbors/I");
     tree->Branch("dist", &dist, "dist[nf]/F");
@@ -94,6 +94,9 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
     tree->Branch("s2", &s2, "s2[nf]/F");
     tree->Branch("Df2",&Df2, "Df2/F");
     tree->Branch("Df3",&Df3, "Df3/F");
+    tree->Branch("Df2asym",&Df2asym, "Df2asym/F");
+    tree->Branch("Df2uns",&Df2uns, "Df2uns/F");
+    tree->Branch("denom",&denom, "denom/F");
     // Add branches for the step entries
     tree->Branch("dists", &(dist[numFixedEntries]), "dists[n]/F");
     tree->Branch("ds2", &(d2[numFixedEntries]), "ds2[n]/F");
@@ -211,12 +214,18 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
                         //get the adjacent bin in the ith direction, and calculate the derivatives. 
                         int adjBin[4] = {i,j,k,l}; //start with the current bin
                         adjBin[ii] += 1; //move one step in the i-th direction
-                        if (adjBin[ii] <= nsteps[ii]) { //check if the adjacent bin is within bounds
-                            dx1_dfpos_grid[i][j][k][l][ii] = (x1_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]] - x1_grid[i][j][k][l]) / (fpos_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]][ii] - fpos_grid[i][j][k][l][ii]);
-                            dx2_dfpos_grid[i][j][k][l][ii] = (x2_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]] - x2_grid[i][j][k][l]) / (fpos_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]][ii] - fpos_grid[i][j][k][l][ii]);
-                            dy1_dfpos_grid[i][j][k][l][ii] = (y1_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]] - y1_grid[i][j][k][l]) / (fpos_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]][ii] - fpos_grid[i][j][k][l][ii]);
-                            dy2_dfpos_grid[i][j][k][l][ii] = (y2_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]] - y2_grid[i][j][k][l]) / (fpos_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]][ii] - fpos_grid[i][j][k][l][ii]);
-                        } 
+
+                        if (adjBin[ii] > nsteps[ii]) continue;
+                        float fposDiff = fpos_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]][ii] - fpos_grid[i][j][k][l][ii];
+                        if (fposDiff == 0) {
+                         printf("Warning: fposDiff is zero for bin (%d, %d, %d, %d) in direction %d. Skipping derivative calculation.\n", i, j, k, l, ii);
+                            continue; //avoid division by zero
+                        }
+                            dx1_dfpos_grid[i][j][k][l][ii] = (x1_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]] - x1_grid[i][j][k][l]) / (fposDiff);
+                            dx2_dfpos_grid[i][j][k][l][ii] = (x2_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]] - x2_grid[i][j][k][l]) / (fposDiff);
+                            dy1_dfpos_grid[i][j][k][l][ii] = (y1_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]] - y1_grid[i][j][k][l]) / (fposDiff);
+                            dy2_dfpos_grid[i][j][k][l][ii] = (y2_grid[adjBin[0]][adjBin[1]][adjBin[2]][adjBin[3]] - y2_grid[i][j][k][l]) / (fposDiff);
+
                     }
                 }
             }
@@ -272,21 +281,64 @@ void BuildMultiShotDataset(const char* originalRootFile,  const int numShots, co
 */            
             Df3=0;
             Df2=0;
+            /*
             Df3= x1[0]/(dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2])
                     - y1[0]/(dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2]);
-            Df3/= dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3]/
+            Df3/= (dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3]/
                 dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2]
                 -dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3]/
-                dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2];
-            Df2=x1[0]-dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3]*Df3/
+                dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2]);
+                */
+            Df3= x1[0]*(dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2])
+                    - y1[0]*(dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2]);
+            denom= dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3]*
+                    dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2]
+                    -dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3]*
+                    dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2];
+
+            //stable, symmetric version:
+            Df2= x1[0]*(dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3])
+                    - y1[0]*(dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3]);
+            float denom2= -1*denom;
+            /*doing it out by hand makes it clear these differ only by a sign:
+            dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2]*
+                    dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3]
+                    -dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2]*
+                    dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3];
+                    */
+
+            if (denom == 0) {
+                printf("Warning: denom is zero for bin (%d, %d, %d, %d). Skipping derivative calculation.\n", bin[0], bin[1], bin[2], bin[3]);
+                Df3 = 0; //avoid division by zero
+                Df2=0;
+            } else {
+                Df3 /= denom;
+                Df2 /= -denom;
+            }       
+           
+
+
+            //symmetric version:
+            Df2uns= x1[0]/(dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3])
+                    - y1[0]/(dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3]);
+            Df2uns/= dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2]/
+                dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3]
+                -dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2]/
+                dy1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3];
+
+            Df2asym=x1[0]-dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][3]*Df3/
                 dx1_dfpos_grid[bin[0]][bin[1]][bin[2]][bin[3]][2];
+
+            //scale down our distance, so we get a more linear response:
+            
+            float scaledown=0.1;
 
             //and if we make those changes, we can look at where we actually are in the grid:
             int binNew[4];
             binNew[0]=bin[0];
             binNew[1]=bin[1];
-            binNew[2]=((fposNew[2][0]-Df2 - start[2] + tolerance[2]) / stepsize[2]);
-            binNew[3]=((fposNew[3][0]-Df3 - start[3] + tolerance[3]) / stepsize[3]);
+            binNew[2]=((fposNew[2][0]-Df2*scaledown - start[2] + tolerance[2]) / stepsize[2]);
+            binNew[3]=((fposNew[3][0]-Df3*scaledown - start[3] + tolerance[3]) / stepsize[3]);
 
             //fill the entry in the new tree with the data from the grid at this point:
             //check if the new bin is within bounds
